@@ -115,7 +115,8 @@ func KnownEphemeralTaintsRemoved(node *corev1.Node) (*corev1.Taint, bool) {
 // taints have been removed from the node
 func StartupTaintsRemoved(node *corev1.Node, nodeClaim *v1.NodeClaim) (*corev1.Taint, bool) {
 	if nodeClaim != nil {
-		for _, startupTaint := range nodeClaim.Spec.StartupTaints {
+		startupTaints := scheduling.Taints(nodeClaim.Spec.StartupTaints).Merge(nodeClaim.Status.CloudProviderStartupTaints)
+		for _, startupTaint := range startupTaints {
 			for i := range node.Spec.Taints {
 				// if the node still has a startup taint applied, it's not ready
 				if startupTaint.MatchTaint(&node.Spec.Taints[i]) {

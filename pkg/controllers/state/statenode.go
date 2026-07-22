@@ -332,6 +332,11 @@ func (in *StateNode) Taints() []corev1.Taint {
 			}); found {
 				return true
 			}
+			if _, found := lo.Find(in.NodeClaim.Status.CloudProviderStartupTaints, func(t corev1.Taint) bool {
+				return t.MatchTaint(&taint)
+			}); found {
+				return true
+			}
 			return false
 		})
 	}

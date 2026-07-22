@@ -69,6 +69,11 @@ type NodeClaimStatus struct {
 	// is also considered as removed.
 	// +optional
 	LastPodEventTime metav1.Time `json:"lastPodEventTime,omitempty"`
+	// CloudProviderStartupTaints are the startup taints added by the cloud provider
+	// +optional
+	// +listType=atomic
+	//nolint:kubeapilinter
+	CloudProviderStartupTaints []v1.Taint `json:"cloudProviderStartupTaints,omitempty"`
 }
 
 func (in *NodeClaim) StatusConditions(opts ...status.ForOption) status.ConditionSet {
