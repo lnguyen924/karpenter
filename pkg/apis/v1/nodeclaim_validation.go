@@ -69,6 +69,12 @@ func (in *NodeClaimTemplateSpec) validateTaints() (errs error) {
 	return errs
 }
 
+// func (in *NodeClaimStatus) validateCloudProviderTaints() (errs error) {
+// 	existing := map[taintKeyEffect]struct{}{}
+// 	errs = validateTaintsField(in.CloudProviderStartupTaints, existing, "cloudProviderStartupTaints")
+// 	return errs
+// }
+
 func validateTaintsField(taints []v1.Taint, existing map[taintKeyEffect]struct{}, fieldName string) error {
 	var errs error
 	for _, taint := range taints {
