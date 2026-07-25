@@ -327,12 +327,8 @@ func (in *StateNode) Taints() []corev1.Taint {
 			if scheduling.IsKnownEphemeralTaint(&taint) {
 				return true
 			}
-			if _, found := lo.Find(in.NodeClaim.Spec.StartupTaints, func(t corev1.Taint) bool {
-				return t.MatchTaint(&taint)
-			}); found {
-				return true
-			}
-			if _, found := lo.Find(in.NodeClaim.Status.CloudProviderStartupTaints, func(t corev1.Taint) bool {
+			startupTaints := scheduling.Taints(in.NodeClaim.Spec.StartupTaints).Merge(in.NodeClaim.Status.CloudProviderStartupTaints)
+			if _, found := lo.Find(startupTaints, func(t corev1.Taint) bool {
 				return t.MatchTaint(&taint)
 			}); found {
 				return true

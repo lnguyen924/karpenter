@@ -645,6 +645,7 @@ func (s *Scheduler) addToExistingNode(ctx context.Context, p *corev1.Pod) error 
 			idx = i
 			return false
 		}
+		log.FromContext(ctx).WithValues("Pod", klog.KObj(p), "Existing node", s.existingNodes[i].Name()).Info("pod cannot schedule to existing node", "reason", err)
 		return true
 	})
 	// If we set the existingNode to something valid, this means that we successfully scheduled to one of these nodes
@@ -682,6 +683,7 @@ func (s *Scheduler) addToInflightNode(ctx context.Context, pod *corev1.Pod) erro
 			idx = i
 			return false
 		}
+		log.FromContext(ctx).WithValues("Pod", klog.KObj(pod), "Inflight node", klog.KObj(s.newNodeClaims[i])).Info("pod cannot schedule to existing inflight node", "reason", err)
 		return true
 	})
 	if inflightNodeClaim != nil {
