@@ -632,6 +632,7 @@ func (s *Scheduler) addToExistingNode(ctx context.Context, p *corev1.Pod) error 
 		}
 		r, result, err := s.existingNodes[i].CanAdd(ctx, p, s.cachedPodData[p.UID], volumes, s.allocator)
 		if err == nil {
+			log.FromContext(ctx).WithValues("Pod", klog.KObj(p), "Existing node", s.existingNodes[i].Name()).Info("pod scheduled to existing node")
 			mu.Lock()
 			defer mu.Unlock()
 
@@ -668,6 +669,7 @@ func (s *Scheduler) addToInflightNode(ctx context.Context, pod *corev1.Pod) erro
 	parallelizeUntil(s.numConcurrentReconciles, len(s.newNodeClaims), func(i int) bool {
 		r, its, ofr, result, err := s.newNodeClaims[i].CanAdd(ctx, pod, s.cachedPodData[pod.UID], false, s.allocator)
 		if err == nil {
+			log.FromContext(ctx).WithValues("Pod", klog.KObj(pod), "Existing inflight node", klog.KObj(s.newNodeClaims[i])).Info("pod scheduled to existing inflight node")
 			mu.Lock()
 			defer mu.Unlock()
 
