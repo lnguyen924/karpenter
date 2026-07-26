@@ -592,15 +592,19 @@ func (s *Scheduler) add(ctx context.Context, pod *corev1.Pod) error {
 
 	// first try to schedule against an in-flight real node
 	if err := s.addToExistingNode(ctx, pod); err == nil {
+		log.FromContext(ctx).Info("pod scheduled to existing node")
 		return nil
 	}
+	log.FromContext(ctx).Info("pod did not schedule to existing node")
 	// Consider using https://pkg.go.dev/container/heap
 	sort.Slice(s.newNodeClaims, func(a, b int) bool { return len(s.newNodeClaims[a].Pods) < len(s.newNodeClaims[b].Pods) })
 
 	// Pick existing node that we are about to create
 	if err := s.addToInflightNode(ctx, pod); err == nil {
+		log.FromContext(ctx).Info("pod scheduled to an inflight node")
 		return nil
 	}
+	log.FromContext(ctx).Info("pod did not schedule to an inflight node")
 	if len(s.nodeClaimTemplates) == 0 {
 		return fmt.Errorf("nodepool requirements filtered out all available instance types")
 	}
