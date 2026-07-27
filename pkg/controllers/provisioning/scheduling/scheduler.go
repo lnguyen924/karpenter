@@ -258,6 +258,24 @@ type Scheduler struct {
 	cachedResourceClaims map[types.NamespacedName]*resourcev1.ResourceClaim
 }
 
+// SchedulingError indicates a pod cannot be scheduled to existing nodes or inflight nodes
+type SchedulingError struct {
+	error
+}
+
+func NewSchedulingError(err error) SchedulingError {
+	return SchedulingError{error: err}
+}
+
+func IsSchedulingError(err error) bool {
+	schedulingError := &SchedulingError{}
+	return errors.As(err, schedulingError)
+}
+
+func (e SchedulingError) Unwrap() error {
+	return e.error
+}
+
 // DRAError indicates a pod will not be attempted to be scheduled because it has Dynamic Resource Allocation requirements
 // that are not yet supported by Karpenter
 type DRAError struct {
@@ -297,6 +315,10 @@ func (r Results) Record(ctx context.Context, recorder events.Recorder, cluster *
 		if IsDRAError(err) {
 			recorder.Publish(PodFailedToScheduleEvent(p, err))
 			log.FromContext(ctx).WithValues("Pod", klog.KObj(p)).Info("skipping pod with Dynamic Resource Allocation requirements, not yet supported by Karpenter")
+			continue
+		}
+		if IsSchedulingError(err) {
+			log.FromContext(ctx).WithValues("Pod", klog.KObj(p), "Error", err).Info("pod could not schedule to existing or inflight nodes")
 			continue
 		}
 		log.FromContext(ctx).WithValues("Pod", klog.KObj(p)).Error(err, "could not schedule pod")
@@ -354,6 +376,12 @@ func (r Results) ReservedOfferingErrors() map[*corev1.Pod]error {
 func (r Results) DRAErrors() map[*corev1.Pod]error {
 	return lo.PickBy(r.PodErrors, func(_ *corev1.Pod, err error) bool {
 		return IsDRAError(err)
+	})
+}
+
+func (r Results) SchedulingErrors() map[*corev1.Pod]error {
+	return lo.PickBy(r.PodErrors, func(_ *corev1.Pod, err error) bool {
+		return IsSchedulingError(err)
 	})
 }
 
@@ -539,6 +567,11 @@ func (s *Scheduler) trySchedule(ctx context.Context, p *corev1.Pod) error {
 		if IsDRAError(err) {
 			return err
 		}
+
+		if IsSchedulingError(err) {
+			return err
+		}
+
 		// Eventually we won't be able to relax anymore and this while loop will exit
 		if relaxed := s.preferences.Relax(ctx, p); !relaxed {
 			return err
@@ -591,28 +624,24 @@ func (s *Scheduler) add(ctx context.Context, pod *corev1.Pod) error {
 	}
 
 	// first try to schedule against an in-flight real node
-	if err := s.addToExistingNode(ctx, pod); err == nil {
-		log.FromContext(ctx).Info("pod scheduled to existing node")
-		return nil
+	if err := s.addToExistingNode(ctx, pod); err != nil {
+		return err
 	}
-	log.FromContext(ctx).Info("pod did not schedule to existing node")
 	// Consider using https://pkg.go.dev/container/heap
 	sort.Slice(s.newNodeClaims, func(a, b int) bool { return len(s.newNodeClaims[a].Pods) < len(s.newNodeClaims[b].Pods) })
 
 	// Pick existing node that we are about to create
-	if err := s.addToInflightNode(ctx, pod); err == nil {
-		log.FromContext(ctx).Info("pod scheduled to an inflight node")
-		return nil
+	if err := s.addToInflightNode(ctx, pod); err != nil {
+		return err
 	}
-	log.FromContext(ctx).Info("pod did not schedule to an inflight node")
 	if len(s.nodeClaimTemplates) == 0 {
 		return fmt.Errorf("nodepool requirements filtered out all available instance types")
 	}
 	err := s.addToNewNodeClaim(ctx, pod)
-	if err == nil {
-		return nil
+	if err != nil {
+		return err
 	}
-	return err
+	return nil
 }
 
 func (s *Scheduler) addToExistingNode(ctx context.Context, p *corev1.Pod) error {
@@ -628,6 +657,7 @@ func (s *Scheduler) addToExistingNode(ctx context.Context, p *corev1.Pod) error 
 	if err != nil {
 		return err
 	}
+	errs := make([]error, len(s.existingNodes))
 	parallelizeUntil(s.numConcurrentReconciles, len(s.existingNodes), func(i int) bool {
 		if s.existingNodes[i].isUnderConsolidateAfter && (!pod.IsPending(p) && !s.deletingNodeNames.Has(p.Spec.NodeName)) {
 			// We shouldn't try to schedule candidate pods onto nodes that are under consolidate after.
@@ -650,7 +680,7 @@ func (s *Scheduler) addToExistingNode(ctx context.Context, p *corev1.Pod) error 
 			idx = i
 			return false
 		}
-		log.FromContext(ctx).WithValues("Pod", klog.KObj(p), "Existing node", s.existingNodes[i].Name()).Info("pod cannot schedule to existing node", "reason", err)
+		errs[i] = serrors.Wrap(fmt.Errorf("pod cannot schedule to existing node"), "Pod", klog.KObj(p), "Node", s.existingNodes[i].Name())
 		return true
 	})
 	// If we set the existingNode to something valid, this means that we successfully scheduled to one of these nodes
@@ -658,7 +688,8 @@ func (s *Scheduler) addToExistingNode(ctx context.Context, p *corev1.Pod) error 
 		existingNode.Add(ctx, p, s.cachedPodData[p.UID], requirements, volumes, allocationResult)
 		return nil
 	}
-	return fmt.Errorf("failed scheduling pod to existing nodes")
+	schedulingErr := NewSchedulingError(multierr.Combine(errs...))
+	return schedulingErr
 }
 
 func (s *Scheduler) addToInflightNode(ctx context.Context, pod *corev1.Pod) error {
@@ -670,6 +701,8 @@ func (s *Scheduler) addToInflightNode(ctx context.Context, pod *corev1.Pod) erro
 	var updatedInstanceTypes []*cloudprovider.InstanceType
 	var offeringsToReserve []*cloudprovider.Offering
 	var allocationResult *dynamicresources.AllocationResult
+
+	errs := make([]error, len(s.newNodeClaims))
 	parallelizeUntil(s.numConcurrentReconciles, len(s.newNodeClaims), func(i int) bool {
 		r, its, ofr, result, err := s.newNodeClaims[i].CanAdd(ctx, pod, s.cachedPodData[pod.UID], false, s.allocator)
 		if err == nil {
@@ -689,14 +722,15 @@ func (s *Scheduler) addToInflightNode(ctx context.Context, pod *corev1.Pod) erro
 			idx = i
 			return false
 		}
-		log.FromContext(ctx).WithValues("Pod", klog.KObj(pod), "Inflight node", klog.KObj(s.newNodeClaims[i])).Info("pod cannot schedule to existing inflight node", "reason", err)
+		errs[i] = serrors.Wrap(fmt.Errorf("pod cannot schedule to existing inflight node"), "Pod", klog.KObj(pod), "Inflight node", klog.KObj(s.newNodeClaims[i]))
 		return true
 	})
 	if inflightNodeClaim != nil {
 		inflightNodeClaim.Add(ctx, pod, s.cachedPodData[pod.UID], updatedRequirements, updatedInstanceTypes, offeringsToReserve, allocationResult, s.allocator)
 		return nil
 	}
-	return fmt.Errorf("failed scheduling pod to inflight nodes")
+	schedulingErr := NewSchedulingError(multierr.Combine(errs...))
+	return schedulingErr
 }
 
 //nolint:gocyclo
