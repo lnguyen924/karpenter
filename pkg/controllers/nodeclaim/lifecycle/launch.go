@@ -137,6 +137,7 @@ func PopulateNodeClaimDetails(nodeClaim, retrieved *v1.NodeClaim) *v1.NodeClaim 
 	nodeClaim.Status.ImageID = retrieved.Status.ImageID
 	nodeClaim.Status.Allocatable = retrieved.Status.Allocatable
 	nodeClaim.Status.Capacity = retrieved.Status.Capacity
+	nodeClaim.Status.CloudProviderStartupTaints = retrieved.Status.CloudProviderStartupTaints
 	return nodeClaim
 }
 

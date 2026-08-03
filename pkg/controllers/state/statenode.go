@@ -323,11 +323,12 @@ func (in *StateNode) Taints() []corev1.Taint {
 		// the node is initialized. Without this, if the taint is generic and re-appears on the node for a
 		// different reason (e.g. the node is cordoned) we will assume that pods can schedule against the
 		// node in the future incorrectly.
+		startupTaints := scheduling.Taints(in.NodeClaim.Spec.StartupTaints).Merge(in.NodeClaim.Status.CloudProviderStartupTaints)
 		return lo.Reject(taints, func(taint corev1.Taint, _ int) bool {
 			if scheduling.IsKnownEphemeralTaint(&taint) {
 				return true
 			}
-			if _, found := lo.Find(in.NodeClaim.Spec.StartupTaints, func(t corev1.Taint) bool {
+			if _, found := lo.Find(startupTaints, func(t corev1.Taint) bool {
 				return t.MatchTaint(&taint)
 			}); found {
 				return true
